@@ -3,7 +3,8 @@ import openpyxl
 from bs4 import BeautifulSoup
 
 
-def get_connect(url, search_period="", page="", employment="", area=160, text=""):
+def get_content(url, search_period="", page="", employment="", area=160, text=""):
+    """ Функиця принимает параметры для создания ссылки. """
     URL = url
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:97.0) Gecko/20100101 Firefox/97.0"}
@@ -16,6 +17,7 @@ def get_connect(url, search_period="", page="", employment="", area=160, text=""
 
 
 def create_csv():
+    """ Функция для создания CSV документа  """
     book = openpyxl.Workbook()
     sheet = book.active
     sheet['A1'] = "Наименование вакансии"
@@ -28,6 +30,7 @@ def create_csv():
 
 
 def salary_string_cleaner(dirty_data):
+    """ Функция очищает строку и делает корректную выборку """
     string = dirty_data.text.replace("\u202f", "").split(" ")
     if "до" in string:
         salary_min = None
@@ -50,18 +53,16 @@ if __name__ == "__main__":
     region = int(input("Укажите регион для поиска вакансий:\t"))
     period = int(input("Укажите период в который была вывешена вакансия::\t"))
     pages = int(input("Сколько страниц собрать?\t"))
-    row = 2
+    row = 2  # для csv файла, указывает с какой строки начать запись
     book, sheet = create_csv()  # Инициализация CSV файла
     for page in range(0, pages):
-        content, page_url = get_connect(
+        content, page_url = get_content(
             "https://hh.kz/search/vacancy", period, page, "", region, text=find_text)
         vacancy_tab = content.find_all(
             "div", {"class": "vacancy-serp-item"})
-        print(len(vacancy_tab))
         for vacancy in vacancy_tab:
             title = vacancy.find(
                 "a", {"data-qa": "vacancy-serp__vacancy-title"})
-            print(title)
             salary_dirty_str = vacancy.find_all(
                 "span", {"class": "bloko-header-section-3"})
             if len(salary_dirty_str) != 1:
