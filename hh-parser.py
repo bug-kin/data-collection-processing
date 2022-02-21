@@ -1,9 +1,19 @@
 import requests
 import openpyxl
+import json
+import hashlib
 from bs4 import BeautifulSoup
+from pymongo import MongoClient
 
 
-def get_content(url, search_period="", page="", employment="", area=160, text=""):
+def mongo_connect(host, port, database):
+    """ Функция для подключения к БД MongoDB """
+    client = MongoClient(host, port)
+    db = client[database]
+    return db.vacancies
+
+
+def get_content(url, search_period="", page="", employment="", area=160, text="") -> tuple:
     """ Функиця принимает параметры для создания ссылки. """
     URL = url
     HEADERS = {
@@ -16,17 +26,12 @@ def get_content(url, search_period="", page="", employment="", area=160, text=""
     return soup, response.url
 
 
-def create_csv():
-    """ Функция для создания CSV документа  """
-    book = openpyxl.Workbook()
-    sheet = book.active
-    sheet['A1'] = "Наименование вакансии"
-    sheet['B1'] = "Минимальная зарплата"
-    sheet['C1'] = "Максимальная зарплата"
-    sheet['D1'] = "Валюта"
-    sheet['E1'] = "Ссылка на вакансию"
-    sheet['F1'] = "Ссылка на сайт"
-    return book, sheet
+def get_last_page(html) -> int:
+    """ Функция которая выводит последнюю цифру из пагинации """
+    content = html
+    last_page = content.find("div", {
+        "class": "pager", "data-qa": "pager-block"}).find_all("a", {"data-qa": "pager-page"})
+    return int(last_page[-1].text)
 
 
 def salary_string_cleaner(dirty_data):
@@ -48,36 +53,55 @@ def salary_string_cleaner(dirty_data):
     return salary_min, salary_max, salary_currency
 
 
+def salary_dictionary(min_s, max_s, cur_s) -> dict:
+    """ Функция собирает три значения зарплаты в один словарь """
+    return {"Minimum wage": min_s, "Maximum wage": max_s, "Currency": cur_s}
+
+
+def create_data(vacancy_url, title, salary, source_url, data={}) -> dict:
+    """ Функция собирает данные в один словарь, проводит сериализацию и возвращает в виде строки"""
+    data["_id"] = hashlib.md5(vacancy_url.encode()).hexdigest()
+    data["title"] = title
+    data["salary"] = salary
+    data["vacancy_url"] = vacancy_url
+    data["source_url"] = source_url
+    return data
+
+
 if __name__ == "__main__":
-    find_text = input("Введите текст для поиска вакансий:\t")
-    region = int(input("Укажите регион для поиска вакансий:\t"))
-    period = int(input("Укажите период в который была вывешена вакансия::\t"))
-    pages = int(input("Сколько страниц собрать?\t"))
-    row = 2  # для csv файла, указывает с какой строки начать запись
-    book, sheet = create_csv()  # Инициализация CSV файла
+    find_text = input("Введите текст для поиска вакансий: ")
+    region = int(input("Укажите регион для поиска вакансий: "))
+    period = int(input("Укажите период в который была вывешена вакансия: "))
+    first_page = get_content(
+        "https://hh.kz/search/vacancy", search_period=period, area=region, text=find_text)[0]
+    pages = get_last_page(first_page)
+
+    vacancies_db = mongo_connect("127.0.0.1", 27017, "headhunter")
+
     for page in range(0, pages):
-        content, page_url = get_content(
+        content, source_url = get_content(
             "https://hh.kz/search/vacancy", period, page, "", region, text=find_text)
         vacancy_tab = content.find_all(
             "div", {"class": "vacancy-serp-item"})
+
         for vacancy in vacancy_tab:
             title = vacancy.find(
                 "a", {"data-qa": "vacancy-serp__vacancy-title"})
+            vacancy_url = title["href"].split("?")[0]
             salary_dirty_str = vacancy.find_all(
                 "span", {"class": "bloko-header-section-3"})
+
             if len(salary_dirty_str) != 1:
                 s_min, s_max, s_cur = salary_string_cleaner(
                     salary_dirty_str[1])
             else:
-                s_min = s_max = s_cur = "-"
+                s_min = s_max = s_cur = None
 
-            sheet[f'A{row}'] = title.text
-            sheet[f'B{row}'] = s_min
-            sheet[f'C{row}'] = s_max
-            sheet[f'D{row}'] = s_cur
-            sheet[f'E{row}'] = title["href"]
-            sheet[f'F{row}'] = page_url
-            row += 1
+            salary = salary_dictionary(s_min, s_max, s_cur)
+            vacancy = create_data(vacancy_url, title.text, salary, source_url)
 
-    book.save('hh.csv')
-    book.close()
+            if vacancies_db.find_one({"_id": vacancy["_id"]}):
+                print("EXIST")
+            else:
+                vacancies_db.insert_one(vacancy)
+                print("New record added")
