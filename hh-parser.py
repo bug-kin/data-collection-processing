@@ -68,40 +68,68 @@ def create_data(vacancy_url, title, salary, source_url, data={}) -> dict:
     return data
 
 
+def get_salary_request(db, minimum, maximum):
+    """ Функция которая выводит данные соответсвующие условиям ЗП """
+    return db.find({"$or": [{"salary.Minimum wage": {"$gt": minimum}}, {
+        "salary.Maximum wage": {"$gt": maximum}}]})
+
+
+def pretty_output(record):
+    """ Функция которая просто выводит данные в приятном глазу формате """
+    return f'Вакансия: \033[1m\033[32m{record["title"]}\033[0m\nСсылка на вакансию: \033[4m\033[3m\033[36m{record["vacancy_url"]}\033[0m\nЗарплата:\n\tМинимум: \033[33m{record["salary"]["Minimum wage"]}\033[0m\n\tМаксимум: \033[33m{record["salary"]["Maximum wage"]}\033[0m\n\tВалюта: {record["salary"]["Currency"]}\n'
+
+
 if __name__ == "__main__":
-    find_text = input("Введите текст для поиска вакансий: ")
-    region = int(input("Укажите регион для поиска вакансий: "))
-    period = int(input("Укажите период в который была вывешена вакансия: "))
-    first_page = get_content(
-        "https://hh.kz/search/vacancy", search_period=period, area=region, text=find_text)[0]
-    pages = get_last_page(first_page)
-
     vacancies_db = mongo_connect("127.0.0.1", 27017, "headhunter")
+    while True:
+        action = input(
+            "Что хотите сделать?\n\t1. Собрать новые вакансии.\n\t2. Вывести данные по записанным вакансиям.\n\tQ. чтобы выйти.\n\n>> ")
 
-    for page in range(0, pages):
-        content, source_url = get_content(
-            "https://hh.kz/search/vacancy", period, page, "", region, text=find_text)
-        vacancy_tab = content.find_all(
-            "div", {"class": "vacancy-serp-item"})
+        if action == "1":
+            find_text = input("Введите текст для поиска вакансий: ")
+            region = int(input("Укажите регион для поиска вакансий: "))
+            period = int(
+                input("Укажите период в который была вывешена вакансия: "))
+            first_page = get_content(
+                "https://hh.kz/search/vacancy", search_period=period, area=region, text=find_text)[0]
+            pages = get_last_page(first_page)
 
-        for vacancy in vacancy_tab:
-            title = vacancy.find(
-                "a", {"data-qa": "vacancy-serp__vacancy-title"})
-            vacancy_url = title["href"].split("?")[0]
-            salary_dirty_str = vacancy.find_all(
-                "span", {"class": "bloko-header-section-3"})
+            for page in range(0, pages):
+                content, source_url = get_content(
+                    "https://hh.kz/search/vacancy", period, page, "", region, text=find_text)
+                vacancy_tab = content.find_all(
+                    "div", {"class": "vacancy-serp-item"})
 
-            if len(salary_dirty_str) != 1:
-                s_min, s_max, s_cur = salary_string_cleaner(
-                    salary_dirty_str[1])
-            else:
-                s_min = s_max = s_cur = None
+                for vacancy in vacancy_tab:
+                    title = vacancy.find(
+                        "a", {"data-qa": "vacancy-serp__vacancy-title"})
+                    vacancy_url = title["href"].split("?")[0]
+                    salary_dirty_str = vacancy.find_all(
+                        "span", {"class": "bloko-header-section-3"})
 
-            salary = salary_dictionary(s_min, s_max, s_cur)
-            vacancy = create_data(vacancy_url, title.text, salary, source_url)
+                    if len(salary_dirty_str) != 1:
+                        s_min, s_max, s_cur = salary_string_cleaner(
+                            salary_dirty_str[1])
+                    else:
+                        s_min = s_max = s_cur = None
 
-            if vacancies_db.find_one({"_id": vacancy["_id"]}):
-                print("EXIST")
-            else:
-                vacancies_db.insert_one(vacancy)
-                print("New record added")
+                    salary = salary_dictionary(s_min, s_max, s_cur)
+                    vacancy = create_data(
+                        vacancy_url, title.text, salary, source_url)
+
+                    if vacancies_db.find_one({"_id": vacancy["_id"]}):
+                        print("EXIST")
+                    else:
+                        vacancies_db.insert_one(vacancy)
+                        print("New record added")
+        elif action == "2":
+            vacancies = get_salary_request(vacancies_db, int(input(
+                "Укажите порог минимальной ЗП: ")), int(input("Укажите порог максимальной ЗП: ")))
+
+            for vacancy in vacancies:
+                print(pretty_output(vacancy))
+        elif action.upper() == "Q":
+            print("Пока~")
+            break
+        else:
+            print("Такого варианта нет.")
